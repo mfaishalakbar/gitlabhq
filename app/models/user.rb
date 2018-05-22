@@ -17,6 +17,7 @@ class User < ActiveRecord::Base
   include IgnorableColumn
   include BulkMemberAccessLoad
   include BlocksJsonSerialization
+  include WithUploads
 
   DEFAULT_NOTIFICATION_LEVEL = :participating
 
@@ -82,11 +83,8 @@ class User < ActiveRecord::Base
   has_one :namespace, -> { where(type: nil) }, dependent: :destroy, foreign_key: :owner_id, inverse_of: :owner, autosave: true # rubocop:disable Cop/ActiveRecordDependent
 
   # Profile
-  has_many :keys, -> do
-    type = Key.arel_table[:type]
-    where(type.not_eq('DeployKey').or(type.eq(nil)))
-  end, dependent: :destroy # rubocop:disable Cop/ActiveRecordDependent
-  has_many :deploy_keys, -> { where(type: 'DeployKey') }, dependent: :destroy # rubocop:disable Cop/ActiveRecordDependent
+  has_many :keys, -> { where(type: ['Key', nil]) }, dependent: :destroy # rubocop:disable Cop/ActiveRecordDependent
+  has_many :deploy_keys, -> { where(type: 'DeployKey') }, dependent: :nullify # rubocop:disable Cop/ActiveRecordDependent
   has_many :gpg_keys
 
   has_many :emails, dependent: :destroy # rubocop:disable Cop/ActiveRecordDependent
@@ -100,8 +98,8 @@ class User < ActiveRecord::Base
   has_many :members
   has_many :group_members, -> { where(requested_at: nil) }, source: 'GroupMember'
   has_many :groups, through: :group_members
-  has_many :owned_groups, -> { where members: { access_level: Gitlab::Access::OWNER } }, through: :group_members, source: :group
-  has_many :masters_groups, -> { where members: { access_level: Gitlab::Access::MASTER } }, through: :group_members, source: :group
+  has_many :owned_groups, -> { where(members: { access_level: Gitlab::Access::OWNER }) }, through: :group_members, source: :group
+  has_many :masters_groups, -> { where(members: { access_level: Gitlab::Access::MASTER }) }, through: :group_members, source: :group
 
   # Projects
   has_many :groups_projects,          through: :groups, source: :projects
@@ -114,13 +112,15 @@ class User < ActiveRecord::Base
   has_many :project_authorizations
   has_many :authorized_projects, through: :project_authorizations, source: :project
 
+  has_many :user_interacted_projects
+  has_many :project_interactions, through: :user_interacted_projects, source: :project, class_name: 'Project'
+
   has_many :snippets,                 dependent: :destroy, foreign_key: :author_id # rubocop:disable Cop/ActiveRecordDependent
   has_many :notes,                    dependent: :destroy, foreign_key: :author_id # rubocop:disable Cop/ActiveRecordDependent
   has_many :issues,                   dependent: :destroy, foreign_key: :author_id # rubocop:disable Cop/ActiveRecordDependent
   has_many :merge_requests,           dependent: :destroy, foreign_key: :author_id # rubocop:disable Cop/ActiveRecordDependent
   has_many :events,                   dependent: :destroy, foreign_key: :author_id # rubocop:disable Cop/ActiveRecordDependent
   has_many :subscriptions,            dependent: :destroy # rubocop:disable Cop/ActiveRecordDependent
-  has_many :recent_events, -> { order "id DESC" }, foreign_key: :author_id,   class_name: "Event"
   has_many :oauth_applications, class_name: 'Doorkeeper::Application', as: :owner, dependent: :destroy # rubocop:disable Cop/ActiveRecordDependent
   has_one  :abuse_report,             dependent: :destroy, foreign_key: :user_id # rubocop:disable Cop/ActiveRecordDependent
   has_many :reported_abuse_reports,   dependent: :destroy, foreign_key: :reporter_id, class_name: "AbuseReport" # rubocop:disable Cop/ActiveRecordDependent
@@ -138,7 +138,8 @@ class User < ActiveRecord::Base
 
   has_many :custom_attributes, class_name: 'UserCustomAttribute'
   has_many :callouts, class_name: 'UserCallout'
-  has_many :uploads, as: :model, dependent: :destroy # rubocop:disable Cop/ActiveRecordDependent
+  has_many :term_agreements
+  belongs_to :accepted_term, class_name: 'ApplicationSetting::Term'
 
   #
   # Validations
@@ -165,12 +166,15 @@ class User < ActiveRecord::Base
 
   before_validation :sanitize_attrs
   before_validation :set_notification_email, if: :email_changed?
+  before_save :set_notification_email, if: :email_changed? # in case validation is skipped
   before_validation :set_public_email, if: :public_email_changed?
+  before_save :set_public_email, if: :public_email_changed? # in case validation is skipped
   before_save :ensure_incoming_email_token
   before_save :ensure_user_rights_and_limits, if: ->(user) { user.new_record? || user.external_changed? }
   before_save :skip_reconfirmation!, if: ->(user) { user.email_changed? && user.read_only_attribute?(:email) }
   before_save :check_for_verified_email, if: ->(user) { user.email_changed? && !user.new_record? }
   before_validation :ensure_namespace_correct
+  before_save :ensure_namespace_correct # in case validation is skipped
   after_validation :set_username_errors
   after_update :username_changed_hook, if: :username_changed?
   after_destroy :post_destroy_hook
@@ -185,7 +189,7 @@ class User < ActiveRecord::Base
 
   # User's Dashboard preference
   # Note: When adding an option, it MUST go on the end of the array.
-  enum dashboard: [:projects, :stars, :project_activity, :starred_project_activity, :groups, :todos]
+  enum dashboard: [:projects, :stars, :project_activity, :starred_project_activity, :groups, :todos, :issues, :merge_requests]
 
   # User's Project preference
   # Note: When adding an option, it MUST go on the end of the array.
@@ -233,14 +237,18 @@ class User < ActiveRecord::Base
   scope :order_recent_sign_in, -> { reorder(Gitlab::Database.nulls_last_order('current_sign_in_at', 'DESC')) }
   scope :order_oldest_sign_in, -> { reorder(Gitlab::Database.nulls_last_order('current_sign_in_at', 'ASC')) }
 
-  def self.with_two_factor
+  def self.with_two_factor_indistinct
     joins("LEFT OUTER JOIN u2f_registrations AS u2f ON u2f.user_id = users.id")
-      .where("u2f.id IS NOT NULL OR otp_required_for_login = ?", true).distinct(arel_table[:id])
+      .where("u2f.id IS NOT NULL OR users.otp_required_for_login = ?", true)
+  end
+
+  def self.with_two_factor
+    with_two_factor_indistinct.distinct(arel_table[:id])
   end
 
   def self.without_two_factor
     joins("LEFT OUTER JOIN u2f_registrations AS u2f ON u2f.user_id = users.id")
-      .where("u2f.id IS NULL AND otp_required_for_login = ?", false)
+      .where("u2f.id IS NULL AND users.otp_required_for_login = ?", false)
   end
 
   #
@@ -257,7 +265,7 @@ class User < ActiveRecord::Base
       end
     end
 
-    def sort(method)
+    def sort_by_attribute(method)
       order_method = method || 'id_desc'
 
       case order_method.to_s
@@ -409,7 +417,6 @@ class User < ActiveRecord::Base
       unique_internal(where(ghost: true), 'ghost', email) do |u|
         u.bio = 'This is a "Ghost User", created to hold all issues authored by users that have since been deleted. This user cannot be removed.'
         u.name = 'Ghost User'
-        u.notification_email = email
       end
     end
   end
@@ -431,7 +438,7 @@ class User < ActiveRecord::Base
   end
 
   def self.non_internal
-    where(Hash[internal_attributes.zip([[false, nil]] * internal_attributes.size)])
+    where(internal_attributes.map { |attr| "#{attr} IS NOT TRUE" }.join(" AND "))
   end
 
   #
@@ -601,6 +608,15 @@ class User < ActiveRecord::Base
     authorized_projects(min_access_level).exists?({ id: project.id })
   end
 
+  # Typically used in conjunction with projects table to get projects
+  # a user has been given access to.
+  #
+  # Example use:
+  # `Project.where('EXISTS(?)', user.authorizations_for_projects)`
+  def authorizations_for_projects
+    project_authorizations.select(1).where('project_authorizations.project_id = projects.id')
+  end
+
   # Returns the projects this user has reporter (or greater) access to, limited
   # to at most the given projects.
   #
@@ -612,9 +628,7 @@ class User < ActiveRecord::Base
   end
 
   def owned_projects
-    @owned_projects ||=
-      Project.where('namespace_id IN (?) OR namespace_id = ?',
-                    owned_groups.select(:id), namespace.id).joins(:namespace)
+    @owned_projects ||= Project.from("(#{owned_projects_union.to_sql}) AS projects")
   end
 
   # Returns projects which user can admin issues on (for example to move an issue to that project).
@@ -692,10 +706,6 @@ class User < ActiveRecord::Base
     projects_limit - personal_projects_count
   end
 
-  def personal_projects_count
-    @personal_projects_count ||= personal_projects.count
-  end
-
   def recent_push(project = nil)
     service = Users::LastPushEventService.new(self)
 
@@ -728,7 +738,7 @@ class User < ActiveRecord::Base
 
   def ldap_user?
     if identities.loaded?
-      identities.find { |identity| Gitlab::OAuth::Provider.ldap_provider?(identity.provider) && !identity.extern_uid.nil? }
+      identities.find { |identity| Gitlab::Auth::OAuth::Provider.ldap_provider?(identity.provider) && !identity.extern_uid.nil? }
     else
       identities.exists?(["provider LIKE ? AND extern_uid IS NOT NULL", "ldap%"])
     end
@@ -850,6 +860,16 @@ class User < ActiveRecord::Base
     confirmed? && !temp_oauth_email?
   end
 
+  def accept_pending_invitations!
+    pending_invitations.select do |member|
+      member.accept_invite!(self)
+    end
+  end
+
+  def pending_invitations
+    Member.where(invite_email: verified_emails).invite
+  end
+
   def all_emails
     all_emails = []
     all_emails << email unless temp_oauth_email?
@@ -906,7 +926,7 @@ class User < ActiveRecord::Base
 
   def delete_async(deleted_by:, params: {})
     block if params[:hard_delete]
-    DeleteUserWorker.perform_async(deleted_by.id, id, params)
+    DeleteUserWorker.perform_async(deleted_by.id, id, params.to_h)
   end
 
   def notification_service
@@ -943,10 +963,13 @@ class User < ActiveRecord::Base
   end
 
   def manageable_groups
-    union = Gitlab::SQL::Union.new([owned_groups.select(:id),
-                                    masters_groups.select(:id)])
-    arel_union = Arel::Nodes::SqlLiteral.new(union.to_sql)
-    owned_and_master_groups = Group.where(Group.arel_table[:id].in(arel_union))
+    union_sql = Gitlab::SQL::Union.new([owned_groups.select(:id), masters_groups.select(:id)]).to_sql
+
+    # Update this line to not use raw SQL when migrated to Rails 5.2.
+    # Either ActiveRecord or Arel constructions are fine.
+    # This was replaced with the raw SQL construction because of bugs in the arel gem.
+    # Bugs were fixed in arel 9.0.0 (Rails 5.2).
+    owned_and_master_groups = Group.where("namespaces.id IN (#{union_sql})") # rubocop:disable GitlabSecurity/SqlInjection
 
     Gitlab::GroupHierarchy.new(owned_and_master_groups).base_and_descendants
   end
@@ -986,12 +1009,19 @@ class User < ActiveRecord::Base
     !solo_owned_groups.present?
   end
 
-  def ci_authorized_runners
-    @ci_authorized_runners ||= begin
-      runner_ids = Ci::RunnerProject
-        .where("ci_runner_projects.project_id IN (#{ci_projects_union.to_sql})") # rubocop:disable GitlabSecurity/SqlInjection
+  def ci_owned_runners
+    @ci_owned_runners ||= begin
+      project_runner_ids = Ci::RunnerProject
+        .where(project: authorized_projects(Gitlab::Access::MASTER))
         .select(:runner_id)
-      Ci::Runner.specific.where(id: runner_ids)
+
+      group_runner_ids = Ci::RunnerNamespace
+        .where(namespace_id: owned_or_masters_groups.select(:id))
+        .select(:runner_id)
+
+      union = Gitlab::SQL::Union.new([project_runner_ids, group_runner_ids])
+
+      Ci::Runner.specific.where("ci_runners.id IN (#{union.to_sql})") # rubocop:disable GitlabSecurity/SqlInjection
     end
   end
 
@@ -1026,24 +1056,6 @@ class User < ActiveRecord::Base
     end
   end
 
-  def update_cache_counts
-    assigned_open_merge_requests_count(force: true)
-    assigned_open_issues_count(force: true)
-  end
-
-  def invalidate_cache_counts
-    invalidate_issue_cache_counts
-    invalidate_merge_request_cache_counts
-  end
-
-  def invalidate_issue_cache_counts
-    Rails.cache.delete(['users', id, 'assigned_open_issues_count'])
-  end
-
-  def invalidate_merge_request_cache_counts
-    Rails.cache.delete(['users', id, 'assigned_open_merge_requests_count'])
-  end
-
   def todos_done_count(force: false)
     Rails.cache.fetch(['users', id, 'todos_done_count'], force: force, expires_in: 20.minutes) do
       TodosFinder.new(self, state: :done).execute.count
@@ -1056,9 +1068,43 @@ class User < ActiveRecord::Base
     end
   end
 
+  def personal_projects_count(force: false)
+    Rails.cache.fetch(['users', id, 'personal_projects_count'], force: force, expires_in: 24.hours, raw: true) do
+      personal_projects.count
+    end.to_i
+  end
+
   def update_todos_count_cache
     todos_done_count(force: true)
     todos_pending_count(force: true)
+  end
+
+  def invalidate_cache_counts
+    invalidate_issue_cache_counts
+    invalidate_merge_request_cache_counts
+    invalidate_todos_done_count
+    invalidate_todos_pending_count
+    invalidate_personal_projects_count
+  end
+
+  def invalidate_issue_cache_counts
+    Rails.cache.delete(['users', id, 'assigned_open_issues_count'])
+  end
+
+  def invalidate_merge_request_cache_counts
+    Rails.cache.delete(['users', id, 'assigned_open_merge_requests_count'])
+  end
+
+  def invalidate_todos_done_count
+    Rails.cache.delete(['users', id, 'todos_done_count'])
+  end
+
+  def invalidate_todos_pending_count
+    Rails.cache.delete(['users', id, 'todos_pending_count'])
+  end
+
+  def invalidate_personal_projects_count
+    Rails.cache.delete(['users', id, 'personal_projects_count'])
   end
 
   # This is copied from Devise::Models::Lockable#valid_for_authentication?, as our auth
@@ -1068,8 +1114,11 @@ class User < ActiveRecord::Base
   #   <https://github.com/plataformatec/devise/blob/v4.0.0/lib/devise/models/lockable.rb#L92>
   #
   def increment_failed_attempts!
+    return if ::Gitlab::Database.read_only?
+
     self.failed_attempts ||= 0
     self.failed_attempts += 1
+
     if attempts_exceeded?
       lock_access! unless access_locked?
     else
@@ -1164,6 +1213,20 @@ class User < ActiveRecord::Base
     max_member_access_for_group_ids([group_id])[group_id]
   end
 
+  def terms_accepted?
+    accepted_term_id.present?
+  end
+
+  def required_terms_not_accepted?
+    Gitlab::CurrentSettings.current_application_settings.enforce_terms? &&
+      !terms_accepted?
+  end
+
+  def owned_or_masters_groups
+    union = Gitlab::SQL::Union.new([owned_groups, masters_groups])
+    Group.from("(#{union.to_sql}) namespaces")
+  end
+
   protected
 
   # override, from Devise::Validatable
@@ -1175,13 +1238,13 @@ class User < ActiveRecord::Base
 
   private
 
-  def ci_projects_union
-    scope  = { access_level: [Gitlab::Access::MASTER, Gitlab::Access::OWNER] }
-    groups = groups_projects.where(members: scope)
-    other  = projects.where(members: scope)
-
-    Gitlab::SQL::Union.new([personal_projects.select(:id), groups.select(:id),
-                            other.select(:id)])
+  def owned_projects_union
+    Gitlab::SQL::Union.new([
+      Project.where(namespace: namespace),
+      Project.joins(:project_authorizations)
+        .where("projects.namespace_id <> ?", namespace.id)
+        .where(project_authorizations: { user_id: id, access_level: Gitlab::Access::OWNER })
+    ], remove_duplicates: false)
   end
 
   # Added according to https://github.com/plataformatec/devise/blob/7df57d5081f9884849ca15e4fde179ef164a575f/README.md#activejob-integration

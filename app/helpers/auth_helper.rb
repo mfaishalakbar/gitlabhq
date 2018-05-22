@@ -1,9 +1,9 @@
 module AuthHelper
   PROVIDERS_WITH_ICONS = %w(twitter github gitlab bitbucket google_oauth2 facebook azure_oauth2 authentiq).freeze
-  FORM_BASED_PROVIDERS = [/\Aldap/, 'crowd'].freeze
+  LDAP_PROVIDER = /\Aldap/
 
   def ldap_enabled?
-    Gitlab::LDAP::Config.enabled?
+    Gitlab::Auth::LDAP::Config.enabled?
   end
 
   def omniauth_enabled?
@@ -15,15 +15,15 @@ module AuthHelper
   end
 
   def auth_providers
-    Gitlab::OAuth::Provider.providers
+    Gitlab::Auth::OAuth::Provider.providers
   end
 
   def label_for_provider(name)
-    Gitlab::OAuth::Provider.label_for(name)
+    Gitlab::Auth::OAuth::Provider.label_for(name)
   end
 
   def form_based_provider?(name)
-    FORM_BASED_PROVIDERS.any? { |pattern| pattern === name.to_s }
+    [LDAP_PROVIDER, 'crowd'].any? { |pattern| pattern === name.to_s }
   end
 
   def form_based_providers
@@ -36,6 +36,10 @@ module AuthHelper
 
   def button_based_providers
     auth_providers.reject { |provider| form_based_provider?(provider) }
+  end
+
+  def providers_for_base_controller
+    auth_providers.reject { |provider| LDAP_PROVIDER === provider }
   end
 
   def enabled_button_based_providers

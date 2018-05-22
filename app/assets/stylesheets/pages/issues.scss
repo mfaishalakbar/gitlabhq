@@ -1,5 +1,3 @@
-@import "./issues/issue_count_badge";
-
 .issues-list {
   .issue {
     padding: 10px 0 10px $gl-padding;
@@ -13,10 +11,20 @@
       display: inline-block;
     }
 
+    .issuable-meta {
+      .author_link {
+        display: inline-block;
+      }
+
+      .issuable-comments {
+        height: 18px;
+      }
+    }
+
     .icon-merge-request-unmerged {
       height: 13px;
       margin-bottom: 3px;
-     }
+    }
   }
 }
 

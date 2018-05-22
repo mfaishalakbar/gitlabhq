@@ -1,6 +1,6 @@
-if Gitlab::LDAP::Config.enabled?
+if Gitlab::Auth::LDAP::Config.enabled?
   module OmniAuth::Strategies
-    Gitlab::LDAP::Config.available_servers.each do |server|
+    Gitlab::Auth::LDAP::Config.available_servers.each do |server|
       # do not redeclare LDAP
       next if server['provider_name'] == 'ldap'
 
@@ -25,5 +25,6 @@ end
 module OmniAuth
   module Strategies
     autoload :Bitbucket, Rails.root.join('lib', 'omni_auth', 'strategies', 'bitbucket')
+    autoload :Jwt, Rails.root.join('lib', 'omni_auth', 'strategies', 'jwt')
   end
 end

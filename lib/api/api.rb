@@ -8,14 +8,15 @@ module API
     PROJECT_ENDPOINT_REQUIREMENTS = { id: NO_SLASH_URL_PART_REGEX }.freeze
     COMMIT_ENDPOINT_REQUIREMENTS = PROJECT_ENDPOINT_REQUIREMENTS.merge(sha: NO_SLASH_URL_PART_REGEX).freeze
 
-    use GrapeLogging::Middleware::RequestLogger,
-        logger: Logger.new(LOG_FILENAME),
-        formatter: Gitlab::GrapeLogging::Formatters::LogrageWithTimestamp.new,
-        include: [
-          GrapeLogging::Loggers::FilterParameters.new,
-          GrapeLogging::Loggers::ClientEnv.new,
-          Gitlab::GrapeLogging::Loggers::UserLogger.new
-        ]
+    insert_before Grape::Middleware::Error,
+                  GrapeLogging::Middleware::RequestLogger,
+                  logger: Logger.new(LOG_FILENAME),
+                  formatter: Gitlab::GrapeLogging::Formatters::LogrageWithTimestamp.new,
+                  include: [
+                    GrapeLogging::Loggers::FilterParameters.new,
+                    GrapeLogging::Loggers::ClientEnv.new,
+                    Gitlab::GrapeLogging::Loggers::UserLogger.new
+                  ]
 
     allow_access_with_scope :api
     prefix :api
@@ -78,6 +79,14 @@ module API
       rack_response({ 'message' => '404 Not found' }.to_json, 404)
     end
 
+    rescue_from UploadedFile::InvalidPathError do |e|
+      rack_response({ 'message' => e.message }.to_json, 400)
+    end
+
+    rescue_from ObjectStorage::RemoteStoreError do |e|
+      rack_response({ 'message' => e.message }.to_json, 500)
+    end
+
     # Retain 405 error rather than a 500 error for Grape 0.15.0+.
     # https://github.com/ruby-grape/grape/blob/a3a28f5b5dfbb2797442e006dbffd750b27f2a76/UPGRADING.md#changes-to-method-not-allowed-routes
     rescue_from Grape::Exceptions::MethodNotAllowed do |e|
@@ -108,6 +117,7 @@ module API
     mount ::API::AccessRequests
     mount ::API::Applications
     mount ::API::AwardEmoji
+    mount ::API::Badges
     mount ::API::Boards
     mount ::API::Branches
     mount ::API::BroadcastMessages
@@ -120,6 +130,7 @@ module API
     mount ::API::Events
     mount ::API::Features
     mount ::API::Files
+    mount ::API::GroupBoards
     mount ::API::Groups
     mount ::API::GroupMilestones
     mount ::API::Internal
@@ -129,19 +140,23 @@ module API
     mount ::API::Keys
     mount ::API::Labels
     mount ::API::Lint
+    mount ::API::Markdown
     mount ::API::Members
     mount ::API::MergeRequestDiffs
     mount ::API::MergeRequests
     mount ::API::Namespaces
     mount ::API::Notes
+    mount ::API::Discussions
     mount ::API::NotificationSettings
     mount ::API::PagesDomains
     mount ::API::Pipelines
     mount ::API::PipelineSchedules
+    mount ::API::ProjectExport
     mount ::API::ProjectImport
     mount ::API::ProjectHooks
     mount ::API::Projects
     mount ::API::ProjectMilestones
+    mount ::API::ProjectSnapshots
     mount ::API::ProjectSnippets
     mount ::API::ProtectedBranches
     mount ::API::Repositories

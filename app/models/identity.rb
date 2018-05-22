@@ -1,12 +1,16 @@
 class Identity < ActiveRecord::Base
+  def self.uniqueness_scope
+    :provider
+  end
+
   include Sortable
   include CaseSensitivity
 
   belongs_to :user
 
   validates :provider, presence: true
-  validates :extern_uid, allow_blank: true, uniqueness: { scope: :provider, case_sensitive: false }
-  validates :user_id, uniqueness: { scope: :provider }
+  validates :extern_uid, allow_blank: true, uniqueness: { scope: uniqueness_scope, case_sensitive: false }
+  validates :user_id, uniqueness: { scope: uniqueness_scope }
 
   before_save :ensure_normalized_extern_uid, if: :extern_uid_changed?
   after_destroy :clear_user_synced_attributes, if: :user_synced_attributes_metadata_from_provider?
@@ -17,12 +21,12 @@ class Identity < ActiveRecord::Base
   end
 
   def ldap?
-    Gitlab::OAuth::Provider.ldap_provider?(provider)
+    Gitlab::Auth::OAuth::Provider.ldap_provider?(provider)
   end
 
   def self.normalize_uid(provider, uid)
-    if Gitlab::OAuth::Provider.ldap_provider?(provider)
-      Gitlab::LDAP::Person.normalize_dn(uid)
+    if Gitlab::Auth::OAuth::Provider.ldap_provider?(provider)
+      Gitlab::Auth::LDAP::Person.normalize_dn(uid)
     else
       uid.to_s
     end

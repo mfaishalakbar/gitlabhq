@@ -14,7 +14,6 @@ class GroupsController < Groups::ApplicationController
   before_action :authorize_create_group!, only: [:new]
 
   before_action :group_projects, only: [:projects, :activity, :issues, :merge_requests]
-  before_action :group_merge_requests, only: [:merge_requests]
   before_action :event_filter, only: [:activity]
 
   before_action :user_actions, only: [:show, :subgroups]
@@ -174,7 +173,9 @@ class GroupsController < Groups::ApplicationController
       .new(@projects, offset: params[:offset].to_i, filter: event_filter)
       .to_a
 
-    Events::RenderService.new(current_user).execute(@events, atom_request: request.format.atom?)
+    Events::RenderService
+      .new(current_user)
+      .execute(@events, atom_request: request.format.atom?)
   end
 
   def user_actions
@@ -188,6 +189,6 @@ class GroupsController < Groups::ApplicationController
 
     params[:id] = group.to_param
 
-    url_for(params)
+    url_for(safe_params)
   end
 end

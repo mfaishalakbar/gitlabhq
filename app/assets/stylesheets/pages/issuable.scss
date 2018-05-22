@@ -103,6 +103,7 @@
 .issuable-show-labels {
   a {
     margin-bottom: 5px;
+    margin-right: 5px;
     display: inline-block;
 
     .color-label {
@@ -116,6 +117,12 @@
   }
 
   &.has-labels {
+    // this font size is a fix to
+    // prevent unintended spacing between labels
+    // which shows up when rendering markup has white-space
+    // characters present.
+    // see: https://css-tricks.com/fighting-the-space-between-inline-block-elements/#article-header-id-3
+    font-size: 0;
     margin-bottom: -5px;
   }
 }
@@ -130,12 +137,22 @@
   z-index: 200;
   overflow: hidden;
 
-  a:not(.btn-retry),
-  .btn-link {
+  a:not(.btn) {
     color: inherit;
+
+    &:hover {
+      color: $gl-link-hover-color;
+
+      .avatar {
+        border-color: rgba($avatar-border, .2);
+      }
+
+    }
+
   }
 
   .btn-link {
+    color: inherit;
     outline: none;
   }
 
@@ -170,14 +187,31 @@
       padding-left: 10px;
 
       &:hover {
-        color: $gray-darkest;
+        color: $gl-text-color;
+      }
+
+      &:hover,
+      &:focus {
+        text-decoration: none;
       }
     }
 
     &.assignee {
-      .author_link:hover {
-        .author {
-          text-decoration: underline;
+      .author_link {
+        display: block;
+        padding-left: 42px;
+        position: relative;
+
+        &:hover {
+          .author {
+            text-decoration: underline;
+          }
+        }
+
+        .avatar {
+          left: 0;
+          position: absolute;
+          top: 0;
         }
       }
     }
@@ -207,7 +241,7 @@
 
       &:hover {
         text-decoration: underline;
-        color: $md-link-color;
+        color: $gl-link-hover-color;
       }
     }
   }
@@ -351,6 +385,14 @@
       padding: 15px 0 0;
       border-bottom: 0;
       overflow: hidden;
+
+      &:hover {
+        background-color: $sidebar-block-hover-color;
+      }
+
+      &.issuable-sidebar-header {
+        padding-top: 0;
+      }
     }
 
     .participants {
@@ -363,8 +405,17 @@
 
     .gutter-toggle {
       width: 100%;
+      height: $sidebar-toggle-height;
       margin-left: 0;
-      padding-left: 25px;
+      padding-left: 0;
+      border-bottom: 1px solid $border-gray-dark;
+    }
+
+    a.gutter-toggle {
+      display: flex;
+      justify-content: center;
+      flex-direction: column;
+      text-align: center;
     }
 
     .sidebar-collapsed-icon {
@@ -411,10 +462,10 @@
 
       .btn-clipboard {
         border: 0;
+        background: transparent;
         color: $issuable-sidebar-color;
 
         &:hover {
-          background: transparent;
           color: $gl-text-color;
         }
       }
@@ -479,16 +530,6 @@
     }
   }
 
-  a:not(.btn-retry) {
-    &:hover {
-      color: $md-link-color;
-
-      .avatar {
-        border-color: rgba($avatar-border, .2);
-      }
-    }
-  }
-
   .dropdown-menu-toggle {
     width: 100%;
     padding-top: 6px;
@@ -496,15 +537,25 @@
 
   .dropdown-menu {
     width: 100%;
+
+    /*
+     * Overwrite hover style for dropdown items, so that they are not blue
+     * This should be removed during dev of https://gitlab.com/gitlab-org/gitlab-ce/issues/44040
+     */
+    li a {
+      &:hover,
+      &:active,
+      &:focus,
+      &.is-focused {
+        @include dropdown-item-hover;
+      }
+    }
+
   }
 }
 
 .with-performance-bar .right-sidebar {
   top: $header-height + $performance-bar-height;
-
-  .issuable-sidebar {
-    height: calc(100% - #{$performance-bar-height});
-  }
 }
 
 .sidebar-move-issue-confirmation-button {

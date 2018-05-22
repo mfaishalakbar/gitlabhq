@@ -97,13 +97,13 @@ module ProjectsHelper
   end
 
   def remove_project_message(project)
-    _("You are going to remove %{project_name_with_namespace}. Removed project CANNOT be restored! Are you ABSOLUTELY sure?") %
-      { project_name_with_namespace: project.name_with_namespace }
+    _("You are going to remove %{project_full_name}. Removed project CANNOT be restored! Are you ABSOLUTELY sure?") %
+      { project_full_name: project.full_name }
   end
 
   def transfer_project_message(project)
-    _("You are going to transfer %{project_name_with_namespace} to another owner. Are you ABSOLUTELY sure?") %
-      { project_name_with_namespace: project.name_with_namespace }
+    _("You are going to transfer %{project_full_name} to another owner. Are you ABSOLUTELY sure?") %
+      { project_full_name: project.full_name }
   end
 
   def remove_fork_project_message(project)
@@ -155,40 +155,6 @@ module ProjectsHelper
 
   def last_push_event
     current_user&.recent_push(@project)
-  end
-
-  def project_feature_access_select(field)
-    # Don't show option "everyone with access" if project is private
-    options = project_feature_options
-
-    level = @project.project_feature.public_send(field) # rubocop:disable GitlabSecurity/PublicSend
-
-    if @project.private?
-      disabled_option = ProjectFeature::ENABLED
-      highest_available_option = ProjectFeature::PRIVATE if level == disabled_option
-    end
-
-    options = options_for_select(
-      options.invert,
-      selected: highest_available_option || level,
-      disabled: disabled_option
-    )
-
-    content_tag :div, class: "select-wrapper" do
-      concat(
-        content_tag(
-          :select,
-          options,
-          name: "project[project_feature_attributes][#{field}]",
-          id: "project_project_feature_attributes_#{field}",
-          class: "pull-right form-control select-control #{repo_children_classes(field)} ",
-          data: { field: field }
-        )
-      )
-      concat(
-        icon('chevron-down')
-      )
-    end.html_safe
   end
 
   def link_to_autodeploy_doc
@@ -274,16 +240,6 @@ module ProjectsHelper
 
   private
 
-  def repo_children_classes(field)
-    needs_repo_check = [:merge_requests_access_level, :builds_access_level]
-    return unless needs_repo_check.include?(field)
-
-    classes = "project-repo-select js-repo-select"
-    classes << " disabled" unless @project.feature_available?(:repository, current_user)
-
-    classes
-  end
-
   def get_project_nav_tabs(project, current_user)
     nav_tabs = [:home]
 
@@ -301,6 +257,7 @@ module ProjectsHelper
 
     if project.builds_enabled? && can?(current_user, :read_pipeline, project)
       nav_tabs << :pipelines
+      nav_tabs << :operations
     end
 
     if project.external_issue_tracker
@@ -444,15 +401,8 @@ module ProjectsHelper
     exports_path = File.join(Settings.shared['path'], 'tmp/project_exports')
     filtered_message = message.strip.gsub(exports_path, "[REPO EXPORT PATH]")
 
-    filtered_message.gsub(project.repository_storage_path.chomp('/'), "[REPOS PATH]")
-  end
-
-  def project_feature_options
-    {
-      ProjectFeature::DISABLED => s_('ProjectFeature|Disabled'),
-      ProjectFeature::PRIVATE => s_('ProjectFeature|Only team members'),
-      ProjectFeature::ENABLED => s_('ProjectFeature|Everyone with access')
-    }
+    disk_path = Gitlab.config.repositories.storages[project.repository_storage].legacy_disk_path
+    filtered_message.gsub(disk_path.chomp('/'), "[REPOS PATH]")
   end
 
   def project_child_container_class(view_path)
@@ -461,20 +411,6 @@ module ProjectsHelper
 
   def project_issues(project)
     IssuesFinder.new(current_user, project_id: project.id).execute
-  end
-
-  def visibility_select_options(project, selected_level)
-    level_options = Gitlab::VisibilityLevel.values.each_with_object([]) do |level, level_options|
-      next if restricted_levels.include?(level)
-
-      level_options << [
-        visibility_level_label(level),
-        { data: { description: visibility_level_description(level, project) } },
-        level
-      ]
-    end
-
-    options_for_select(level_options, selected_level)
   end
 
   def restricted_levels
@@ -507,7 +443,7 @@ module ProjectsHelper
       visibilityHelpPath: help_page_path('public_access/public_access'),
       registryAvailable: Gitlab.config.registry.enabled,
       registryHelpPath: help_page_path('user/project/container_registry'),
-      lfsAvailable: Gitlab.config.lfs.enabled && current_user.admin?,
+      lfsAvailable: Gitlab.config.lfs.enabled,
       lfsHelpPath: help_page_path('workflow/lfs/manage_large_binaries_with_git_lfs')
     }
 
@@ -530,5 +466,23 @@ module ProjectsHelper
 
   def can_show_last_commit_in_list?(project)
     can?(current_user, :read_cross_project) && project.commit
+  end
+
+  def pages_https_only_disabled?
+    !@project.pages_domains.all?(&:https?)
+  end
+
+  def pages_https_only_title
+    return unless pages_https_only_disabled?
+
+    "You must enable HTTPS for all your domains first"
+  end
+
+  def pages_https_only_label_class
+    if pages_https_only_disabled?
+      "list-label disabled"
+    else
+      "list-label"
+    end
   end
 end

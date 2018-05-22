@@ -3,7 +3,7 @@ require 'spec_helper'
 describe Banzai::Redactor do
   let(:user) { create(:user) }
   let(:project) { build(:project) }
-  let(:redactor) { described_class.new(project, user) }
+  let(:redactor) { described_class.new(Banzai::RenderContext.new(project, user)) }
 
   describe '#redact' do
     context 'when reference not visible to user' do
@@ -40,11 +40,21 @@ describe Banzai::Redactor do
           expect(doc.to_html).to eq(original_content)
         end
       end
+
+      it 'returns <a> tag with original href if it is originally a link reference' do
+        href = 'http://localhost:3000'
+        doc = Nokogiri::HTML
+          .fragment("<a class='gfm' data-reference-type='issue' data-original=#{href} data-link-reference='true'>#{href}</a>")
+
+        redactor.redact([doc])
+
+        expect(doc.to_html).to eq('<a href="http://localhost:3000">http://localhost:3000</a>')
+      end
     end
 
     context 'when project is in pending delete' do
       let!(:issue) { create(:issue, project: project) }
-      let(:redactor) { described_class.new(project, user) }
+      let(:redactor) { described_class.new(Banzai::RenderContext.new(project, user)) }
 
       before do
         project.update(pending_delete: true)

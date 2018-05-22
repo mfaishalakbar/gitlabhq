@@ -1,10 +1,8 @@
-require 'constraints/project_url_constrainer'
-
 resources :projects, only: [:index, :new, :create]
 
 draw :git_http
 
-constraints(ProjectUrlConstrainer.new) do
+constraints(::Constraints::ProjectUrlConstrainer.new) do
   # If the route has a wildcard segment, the segment has a regex constraint,
   # the segment is potentially followed by _another_ wildcard segment, and
   # the `format` option is not set to false, we need to specify that
@@ -54,8 +52,8 @@ constraints(ProjectUrlConstrainer.new) do
         end
       end
 
-      resource :pages, only: [:show, :destroy] do
-        resources :domains, only: [:show, :new, :create, :destroy], controller: 'pages_domains', constraints: { id: %r{[^/]+} } do
+      resource :pages, only: [:show, :update, :destroy] do
+        resources :domains, except: :index, controller: 'pages_domains', constraints: { id: %r{[^/]+} } do
           member do
             post :verify
           end
@@ -69,7 +67,7 @@ constraints(ProjectUrlConstrainer.new) do
         end
       end
 
-      resources :services, constraints: { id: %r{[^/]+} }, only: [:index, :edit, :update] do
+      resources :services, constraints: { id: %r{[^/]+} }, only: [:edit, :update] do
         member do
           put :test
         end
@@ -90,6 +88,12 @@ constraints(ProjectUrlConstrainer.new) do
         end
       end
 
+      resources :deploy_tokens, constraints: { id: /\d+/ }, only: [] do
+        member do
+          put :revoke
+        end
+      end
+
       resources :forks, only: [:index, :new, :create]
       resource :import, only: [:new, :create, :show]
 
@@ -103,6 +107,7 @@ constraints(ProjectUrlConstrainer.new) do
           post :toggle_subscription
           post :remove_wip
           post :assign_related_issues
+          get :discussions, format: :json
           post :rebase
 
           scope constraints: { format: nil }, action: :show do
@@ -131,7 +136,7 @@ constraints(ProjectUrlConstrainer.new) do
           post :bulk_update
         end
 
-        resources :discussions, only: [], constraints: { id: /\h{40}/ } do
+        resources :discussions, only: [:show], constraints: { id: /\h{40}/ } do
           member do
             post :resolve
             delete :resolve, action: :unresolve
@@ -156,7 +161,6 @@ constraints(ProjectUrlConstrainer.new) do
           end
 
           get :diff_for_path
-          get :update_branches
           get :branch_from
           get :branch_to
         end
@@ -170,6 +174,12 @@ constraints(ProjectUrlConstrainer.new) do
         end
       end
 
+      resource :mirror, only: [:show, :update] do
+        member do
+          post :update_now
+        end
+      end
+
       resources :pipelines, only: [:index, :new, :create, :show] do
         collection do
           resource :pipelines_settings, path: 'settings', only: [:show, :update]
@@ -178,6 +188,7 @@ constraints(ProjectUrlConstrainer.new) do
 
         member do
           get :stage
+          get :stage_ajax
           post :cancel
           post :retry
           get :builds
@@ -250,6 +261,8 @@ constraints(ProjectUrlConstrainer.new) do
       end
 
       scope '-' do
+        get 'archive/*id', constraints: { format: Gitlab::PathRegex.archive_formats_regex, id: /.+?/ }, to: 'repositories#archive', as: 'archive'
+
         resources :jobs, only: [:index, :show], constraints: { id: /\d+/ } do
           collection do
             post :cancel_all
@@ -280,6 +293,10 @@ constraints(ProjectUrlConstrainer.new) do
             get :raw, path: 'raw/*path', format: false
             post :keep
           end
+        end
+
+        namespace :ci do
+          resource :lint, only: [:show, :create]
         end
       end
 
@@ -380,7 +397,8 @@ constraints(ProjectUrlConstrainer.new) do
 
       get 'noteable/:target_type/:target_id/notes' => 'notes#index', as: 'noteable_notes'
 
-      resources :boards, only: [:index, :show, :create, :update, :destroy]
+      # On CE only index and show are needed
+      resources :boards, only: [:index, :show]
 
       resources :todos, only: [:create]
 
@@ -398,6 +416,7 @@ constraints(ProjectUrlConstrainer.new) do
 
         collection do
           post :toggle_shared_runners
+          post :toggle_group_runners
         end
       end
 
@@ -416,11 +435,14 @@ constraints(ProjectUrlConstrainer.new) do
       end
       namespace :settings do
         get :members, to: redirect("%{namespace_id}/%{project_id}/project_members")
-        resource :ci_cd, only: [:show], controller: 'ci_cd' do
+        resource :ci_cd, only: [:show, :update], controller: 'ci_cd' do
           post :reset_cache
         end
         resource :integrations, only: [:show]
-        resource :repository, only: [:show], controller: :repository
+        resource :repository, only: [:show], controller: :repository do
+          post :create_deploy_token, path: 'deploy_token/create'
+        end
+        resources :badges, only: [:index]
       end
 
       # Since both wiki and repository routing contains wildcard characters

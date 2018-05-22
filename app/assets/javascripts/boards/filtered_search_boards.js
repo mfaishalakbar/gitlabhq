@@ -4,7 +4,11 @@ import FilteredSearchManager from '../filtered_search/filtered_search_manager';
 
 export default class FilteredSearchBoards extends FilteredSearchManager {
   constructor(store, updateUrl = false, cantEdit = []) {
-    super('boards');
+    super({
+      page: 'boards',
+      isGroupDecendent: true,
+      stateFiltersSelector: '.issues-state-filters',
+    });
 
     this.store = store;
     this.updateUrl = updateUrl;

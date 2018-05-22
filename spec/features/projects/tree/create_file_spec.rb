@@ -8,9 +8,7 @@ feature 'Multi-file editor new file', :js do
     project.add_master(user)
     sign_in(user)
 
-    set_cookie('new_repo', 'true')
-
-    visit project_tree_path(project, :master)
+    visit project_path(project)
 
     wait_for_requests
 
@@ -36,7 +34,10 @@ feature 'Multi-file editor new file', :js do
 
     wait_for_requests
 
-    find('.multi-file-commit-panel-collapse-btn').click
+    find('.js-ide-commit-mode').click
+
+    find('.multi-file-commit-list-item').hover
+    first('.multi-file-discard-btn .btn').click
 
     fill_in('commit-message', with: 'commit message ide')
 

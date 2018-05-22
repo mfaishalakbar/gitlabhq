@@ -64,7 +64,7 @@ feature 'New project' do
     end
 
     context 'with group namespace' do
-      let(:group) { create(:group, :private, owner: user) }
+      let(:group) { create(:group, :private) }
 
       before do
         group.add_owner(user)
@@ -81,7 +81,7 @@ feature 'New project' do
     end
 
     context 'with subgroup namespace' do
-      let(:group) { create(:group, owner: user) }
+      let(:group) { create(:group) }
       let(:subgroup) { create(:group, parent: group) }
 
       before do
@@ -142,7 +142,7 @@ feature 'New project' do
 
     context 'from git repository url, "Repo by URL"' do
       before do
-        first('.import_git').click
+        first('.js-import-git-toggle-button').click
       end
 
       it 'does not autocomplete sensitive git repo URL' do
@@ -173,11 +173,11 @@ feature 'New project' do
 
     context 'from GitHub' do
       before do
-        first('.import_github').click
+        first('.js-import-github').click
       end
 
       it 'shows import instructions' do
-        expect(page).to have_content('Import Projects from GitHub')
+        expect(page).to have_content('Import repositories from GitHub')
         expect(current_path).to eq new_import_github_path
       end
     end

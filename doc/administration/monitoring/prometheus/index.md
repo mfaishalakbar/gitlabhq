@@ -62,7 +62,14 @@ To change the address/port that Prometheus listens on:
     ```
 
     Replace `localhost:9090` with the address/port you want Prometheus to
-    listen on.
+    listen on. If you would like to allow access to Prometheus to hosts other
+    than `localhost`, leave out the host, or use `0.0.0.0` to allow public access:
+
+    ```ruby
+    prometheus['listen_address'] = ':9090'
+    # or
+    prometheus['listen_address'] = '0.0.0.0:9090'
+    ```
 
 1. Save the file and [reconfigure GitLab][reconfigure] for the changes to
    take effect
@@ -113,7 +120,7 @@ To disable the monitoring of Kubernetes:
 
 ## GitLab Prometheus metrics
 
-> Introduced as an experimental feature in GitLab 9.3.
+> Introduced in GitLab 9.3.
 
 GitLab monitors its own internal service metrics, and makes them available at the `/-/metrics` endpoint. Unlike other exporters, this endpoint requires authentication as it is available on the same URL and port as user traffic.
 

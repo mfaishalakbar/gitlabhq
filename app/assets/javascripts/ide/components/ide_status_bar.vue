@@ -1,66 +1,109 @@
 <script>
-  import { mapState } from 'vuex';
-  import icon from '../../vue_shared/components/icon.vue';
-  import tooltip from '../../vue_shared/directives/tooltip';
-  import timeAgoMixin from '../../vue_shared/mixins/timeago';
+import { mapGetters } from 'vuex';
+import icon from '~/vue_shared/components/icon.vue';
+import tooltip from '~/vue_shared/directives/tooltip';
+import timeAgoMixin from '~/vue_shared/mixins/timeago';
+import userAvatarImage from '../../vue_shared/components/user_avatar/user_avatar_image.vue';
 
-  export default {
-    components: {
-      icon,
+export default {
+  components: {
+    icon,
+    userAvatarImage,
+  },
+  directives: {
+    tooltip,
+  },
+  mixins: [timeAgoMixin],
+  props: {
+    file: {
+      type: Object,
+      required: false,
+      default: null,
     },
-    directives: {
-      tooltip,
+  },
+  data() {
+    return {
+      lastCommitFormatedAge: null,
+    };
+  },
+  computed: {
+    ...mapGetters(['currentProject', 'lastCommit']),
+  },
+  mounted() {
+    this.startTimer();
+  },
+  beforeDestroy() {
+    if (this.intervalId) {
+      clearInterval(this.intervalId);
+    }
+  },
+  methods: {
+    startTimer() {
+      this.intervalId = setInterval(() => {
+        this.commitAgeUpdate();
+      }, 1000);
     },
-    mixins: [
-      timeAgoMixin,
-    ],
-    props: {
-      file: {
-        type: Object,
-        required: true,
-      },
+    commitAgeUpdate() {
+      if (this.lastCommit) {
+        this.lastCommitFormatedAge = this.timeFormated(this.lastCommit.committed_date);
+      }
     },
-    computed: {
-      ...mapState([
-        'selectedFile',
-      ]),
+    getCommitPath(shortSha) {
+      return `${this.currentProject.web_url}/commit/${shortSha}`;
     },
-  };
+  },
+};
 </script>
 
 <template>
-  <div class="ide-status-bar">
-    <div>
+  <footer class="ide-status-bar">
+    <div
+      class="ide-status-branch"
+      v-if="lastCommit && lastCommitFormatedAge"
+    >
       <icon
-        name="branch"
-        :size="12"
+        name="commit"
       />
-      {{ selectedFile.branchId }}
+      <a
+        v-tooltip
+        class="commit-sha"
+        :title="lastCommit.message"
+        :href="getCommitPath(lastCommit.short_id)"
+      >{{ lastCommit.short_id }}</a>
+      by
+      {{ lastCommit.author_name }}
+      <time
+        v-tooltip
+        data-placement="top"
+        data-container="body"
+        :datetime="lastCommit.committed_date"
+        :title="tooltipTitle(lastCommit.committed_date)"
+      >
+        {{ lastCommitFormatedAge }}
+      </time>
     </div>
-    <div>
-      <div v-if="selectedFile.lastCommit && selectedFile.lastCommit.id">
-        Last commit:
-        <a
-          v-tooltip
-          :title="selectedFile.lastCommit.message"
-          :href="selectedFile.lastCommit.url"
-        >
-          {{ timeFormated(selectedFile.lastCommit.updatedAt) }} by
-          {{ selectedFile.lastCommit.author }}
-        </a>
-      </div>
+    <div
+      v-if="file"
+      class="ide-status-file"
+    >
+      {{ file.name }}
     </div>
-    <div class="text-right">
-      {{ selectedFile.name }}
+    <div
+      v-if="file"
+      class="ide-status-file"
+    >
+      {{ file.eol }}
     </div>
-    <div class="text-right">
-      {{ selectedFile.eol }}
-    </div>
-    <div class="text-right">
+    <div
+      class="ide-status-file"
+      v-if="file && !file.binary">
       {{ file.editorRow }}:{{ file.editorColumn }}
     </div>
-    <div class="text-right">
-      {{ selectedFile.fileLanguage }}
+    <div
+      v-if="file"
+      class="ide-status-file"
+    >
+      {{ file.fileLanguage }}
     </div>
-  </div>
+  </footer>
 </template>

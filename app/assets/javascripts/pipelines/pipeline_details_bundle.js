@@ -9,7 +9,7 @@ import eventHub from './event_hub';
 
 Vue.use(Translate);
 
-document.addEventListener('DOMContentLoaded', () => {
+export default () => {
   const dataset = document.querySelector('.js-pipeline-details-vue').dataset;
 
   const mediator = new PipelinesMediator({ endpoint: dataset.endpoint });
@@ -27,11 +27,22 @@ document.addEventListener('DOMContentLoaded', () => {
         mediator,
       };
     },
+    methods: {
+      requestRefreshPipelineGraph() {
+        // When an action is clicked
+        // (wether in the dropdown or in the main nodes, we refresh the big graph)
+        this.mediator.refreshPipeline()
+          .catch(() => Flash(__('An error occurred while making the request.')));
+      },
+    },
     render(createElement) {
       return createElement('pipeline-graph', {
         props: {
           isLoading: this.mediator.state.isLoading,
           pipeline: this.mediator.store.state.pipeline,
+        },
+        on: {
+          refreshPipelineGraph: this.requestRefreshPipelineGraph,
         },
       });
     },
@@ -56,7 +67,8 @@ document.addEventListener('DOMContentLoaded', () => {
     },
     methods: {
       postAction(action) {
-        this.mediator.service.postAction(action.path)
+        this.mediator.service
+          .postAction(action.path)
           .then(() => this.mediator.refreshPipeline())
           .catch(() => Flash(__('An error occurred while making the request.')));
       },
@@ -70,4 +82,4 @@ document.addEventListener('DOMContentLoaded', () => {
       });
     },
   });
-});
+};

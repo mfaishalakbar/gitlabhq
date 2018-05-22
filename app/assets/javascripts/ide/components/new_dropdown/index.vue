@@ -1,54 +1,70 @@
 <script>
-  import newModal from './modal.vue';
-  import upload from './upload.vue';
-  import icon from '../../../vue_shared/components/icon.vue';
+import { mapActions } from 'vuex';
+import icon from '~/vue_shared/components/icon.vue';
+import newModal from './modal.vue';
+import upload from './upload.vue';
 
-  export default {
-    components: {
-      icon,
-      newModal,
-      upload,
+export default {
+  components: {
+    icon,
+    newModal,
+    upload,
+  },
+  props: {
+    branch: {
+      type: String,
+      required: true,
     },
-    props: {
-      branch: {
-        type: String,
-        required: true,
-      },
-      path: {
-        type: String,
-        required: true,
-      },
-      parent: {
-        type: Object,
-        default: null,
-      },
+    path: {
+      type: String,
+      required: false,
+      default: '',
     },
-    data() {
-      return {
-        openModal: false,
-        modalType: '',
-      };
+  },
+  data() {
+    return {
+      openModal: false,
+      modalType: '',
+      dropdownOpen: false,
+    };
+  },
+  watch: {
+    dropdownOpen() {
+      this.$nextTick(() => {
+        this.$refs.dropdownMenu.scrollIntoView();
+      });
     },
-    methods: {
-      createNewItem(type) {
-        this.modalType = type;
-        this.openModal = true;
-      },
-      hideModal() {
-        this.openModal = false;
-      },
+  },
+  methods: {
+    ...mapActions(['createTempEntry']),
+    createNewItem(type) {
+      this.modalType = type;
+      this.openModal = true;
+      this.dropdownOpen = false;
     },
-  };
+    hideModal() {
+      this.openModal = false;
+    },
+    openDropdown() {
+      this.dropdownOpen = !this.dropdownOpen;
+    },
+  },
+};
 </script>
 
 <template>
-  <div class="repo-new-btn pull-right">
-    <div class="dropdown">
+  <div class="ide-new-btn">
+    <div
+      class="dropdown"
+      :class="{
+        open: dropdownOpen,
+      }"
+    >
       <button
         type="button"
         class="btn btn-sm btn-default dropdown-toggle add-to-tree"
-        data-toggle="dropdown"
         aria-label="Create new file or directory"
+        @click.stop="openDropdown()"
       >
         <icon
           name="plus"
@@ -61,12 +77,15 @@
           css-classes="pull-left"
         />
       </button>
-      <ul class="dropdown-menu dropdown-menu-right">
+      <ul
+        class="dropdown-menu dropdown-menu-right"
+        ref="dropdownMenu"
+      >
         <li>
           <a
             href="#"
             role="button"
-            @click.prevent="createNewItem('blob')"
+            @click.stop.prevent="createNewItem('blob')"
           >
             {{ __('New file') }}
           </a>
@@ -75,14 +94,14 @@
           <upload
             :branch-id="branch"
             :path="path"
-            :parent="parent"
+            @create="createTempEntry"
           />
         </li>
         <li>
           <a
             href="#"
             role="button"
-            @click.prevent="createNewItem('tree')"
+            @click.stop.prevent="createNewItem('tree')"
           >
             {{ __('New directory') }}
           </a>
@@ -94,8 +113,8 @@
       :type="modalType"
       :branch-id="branch"
       :path="path"
-      :parent="parent"
       @hide="hideModal"
+      @create="createTempEntry"
     />
   </div>
 </template>

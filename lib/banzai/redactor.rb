@@ -2,13 +2,15 @@ module Banzai
   # Class for removing Markdown references a certain user is not allowed to
   # view.
   class Redactor
-    attr_reader :user, :project
+    attr_reader :context
 
-    # project - A Project to use for redacting links.
-    # user - The currently logged in user (if any).
-    def initialize(project, user = nil)
-      @project = project
-      @user = user
+    # context - An instance of `Banzai::RenderContext`.
+    def initialize(context)
+      @context = context
+    end
+
+    def user
+      context.current_user
     end
 
     # Redacts the references in the given Array of documents.
@@ -42,22 +44,39 @@ module Banzai
           next if visible.include?(node)
 
           doc_data[:visible_reference_count] -= 1
-          # The reference should be replaced by the original link's content,
-          # which is not always the same as the rendered one.
-          content = node.attr('data-original') || node.inner_html
-          node.replace(content)
+          redacted_content = redacted_node_content(node)
+          node.replace(redacted_content)
         end
       end
 
       metadata
     end
 
+    # Return redacted content of given node as either the original link (<a> tag),
+    # the original content (text), or the inner HTML of the node.
+    #
+    def redacted_node_content(node)
+      original_content = node.attr('data-original')
+      link_reference = node.attr('data-link-reference')
+
+      # Build the raw <a> tag just with a link as href and content if
+      # it's originally a link pattern. We shouldn't return a plain text href.
+      original_link =
+        if link_reference == 'true' && href = original_content
+          %(<a href="#{href}">#{href}</a>)
+        end
+
+      # The reference should be replaced by the original link's content,
+      # which is not always the same as the rendered one.
+      original_link || original_content || node.inner_html
+    end
+
     def redact_cross_project_references(documents)
-      extractor = Banzai::IssuableExtractor.new(project, user)
+      extractor = Banzai::IssuableExtractor.new(context)
       issuables = extractor.extract(documents)
 
       issuables.each do |node, issuable|
-        next if issuable.project == project
+        next if issuable.project == context.project_for_node(node)
 
         node['class'] = node['class'].gsub('has-tooltip', '')
         node['title'] = nil
@@ -78,7 +97,7 @@ module Banzai
       end
 
       per_type.each do |type, nodes|
-        parser = Banzai::ReferenceParser[type].new(project, user)
+        parser = Banzai::ReferenceParser[type].new(context)
 
         visible.merge(parser.nodes_visible_to_user(user, nodes))
       end

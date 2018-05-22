@@ -17,7 +17,7 @@ module IssuableCollections
     set_pagination
     return if redirect_out_of_range(@total_pages)
 
-    if params[:label_name].present?
+    if params[:label_name].present? && @project
       labels_params = { project_id: @project.id, title: params[:label_name] }
       @labels = LabelsFinder.new(current_user, labels_params).execute
     end
@@ -57,7 +57,7 @@ module IssuableCollections
     out_of_range = @issuables.current_page > total_pages # rubocop:disable Gitlab/ModuleWithInstanceVariables
 
     if out_of_range
-      redirect_to(url_for(params.merge(page: total_pages, only_path: true)))
+      redirect_to(url_for(safe_params.merge(page: total_pages, only_path: true)))
     end
 
     out_of_range
@@ -165,8 +165,8 @@ module IssuableCollections
                                   [:project, :author, :assignees, :labels, :milestone, project: :namespace]
                                 when 'MergeRequest'
                                   [
-                                    :source_project, :target_project, :author, :assignee, :labels, :milestone,
-                                    head_pipeline: :project, target_project: :namespace, latest_merge_request_diff: :merge_request_diff_commits
+                                    :target_project, :author, :assignee, :labels, :milestone,
+                                    source_project: :route, head_pipeline: :project, target_project: :namespace, latest_merge_request_diff: :merge_request_diff_commits
                                   ]
                                 end
   end

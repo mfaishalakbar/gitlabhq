@@ -5,6 +5,7 @@ class ApplicationController < ActionController::Base
   include Gitlab::GonHelper
   include GitlabRoutingHelper
   include PageLayoutHelper
+  include SafeParamsHelper
   include SentryHelper
   include WorkhorseHelper
   include EnforcesTwoFactorAuthentication
@@ -12,12 +13,13 @@ class ApplicationController < ActionController::Base
 
   before_action :authenticate_sessionless_user!
   before_action :authenticate_user!
+  before_action :enforce_terms!, if: :should_enforce_terms?
   before_action :validate_user_service_ticket!
   before_action :check_password_expiration
   before_action :ldap_security_check
   before_action :sentry_context
   before_action :default_headers
-  before_action :add_gon_variables, unless: -> { request.path.start_with?('/-/peek') }
+  before_action :add_gon_variables, unless: :peek_request?
   before_action :configure_permitted_parameters, if: :devise_controller?
   before_action :require_email, unless: :devise_controller?
 
@@ -109,7 +111,8 @@ class ApplicationController < ActionController::Base
   def log_exception(exception)
     Raven.capture_exception(exception) if sentry_enabled?
 
-    application_trace = ActionDispatch::ExceptionWrapper.new(env, exception).application_trace
+    backtrace_cleaner = Gitlab.rails5? ? env["action_dispatch.backtrace_cleaner"] : env
+    application_trace = ActionDispatch::ExceptionWrapper.new(backtrace_cleaner, exception).application_trace
     application_trace.map! { |t| "  #{t}\n" }
     logger.error "\n#{exception.class.name} (#{exception.message}):\n#{application_trace.join}"
   end
@@ -191,7 +194,7 @@ class ApplicationController < ActionController::Base
     return unless signed_in? && session[:service_tickets]
 
     valid = session[:service_tickets].all? do |provider, ticket|
-      Gitlab::OAuth::Session.valid?(provider, ticket)
+      Gitlab::Auth::OAuth::Session.valid?(provider, ticket)
     end
 
     unless valid
@@ -215,7 +218,7 @@ class ApplicationController < ActionController::Base
     if current_user && current_user.requires_ldap_check?
       return unless current_user.try_obtain_ldap_lease
 
-      unless Gitlab::LDAP::Access.allowed?(current_user)
+      unless Gitlab::Auth::LDAP::Access.allowed?(current_user)
         sign_out current_user
         flash[:alert] = "Access denied for your LDAP account."
         redirect_to new_user_session_path
@@ -227,10 +230,6 @@ class ApplicationController < ActionController::Base
     # Split using comma to maintain backward compatibility Ex/ "filter1,filter2"
     filters = cookies['event_filter'].split(',')[0] if cookies['event_filter'].present?
     @event_filter ||= EventFilter.new(filters)
-  end
-
-  def gitlab_ldap_access(&block)
-    Gitlab::LDAP::Access.open { |access| yield(access) }
   end
 
   # JSON for infinite scroll via Pager object
@@ -271,6 +270,27 @@ class ApplicationController < ActionController::Base
     end
   end
 
+  def enforce_terms!
+    return unless current_user
+    return if current_user.terms_accepted?
+
+    if sessionless_user?
+      render_403
+    else
+      # Redirect to the destination if the request is a get.
+      # Redirect to the source if it was a post, so the user can re-submit after
+      # accepting the terms.
+      redirect_path = if request.get?
+                        request.fullpath
+                      else
+                        URI(request.referer).path if request.referer
+                      end
+
+      flash[:notice] = _("Please accept the Terms of Service before continuing.")
+      redirect_to terms_path(redirect: redirect_path), status: :found
+    end
+  end
+
   def import_sources_enabled?
     !Gitlab::CurrentSettings.import_sources.empty?
   end
@@ -284,7 +304,7 @@ class ApplicationController < ActionController::Base
   end
 
   def github_import_configured?
-    Gitlab::OAuth::Provider.enabled?(:github)
+    Gitlab::Auth::OAuth::Provider.enabled?(:github)
   end
 
   def gitlab_import_enabled?
@@ -292,7 +312,7 @@ class ApplicationController < ActionController::Base
   end
 
   def gitlab_import_configured?
-    Gitlab::OAuth::Provider.enabled?(:gitlab)
+    Gitlab::Auth::OAuth::Provider.enabled?(:gitlab)
   end
 
   def bitbucket_import_enabled?
@@ -300,7 +320,7 @@ class ApplicationController < ActionController::Base
   end
 
   def bitbucket_import_configured?
-    Gitlab::OAuth::Provider.enabled?(:bitbucket)
+    Gitlab::Auth::OAuth::Provider.enabled?(:bitbucket)
   end
 
   def google_code_import_enabled?
@@ -343,5 +363,19 @@ class ApplicationController < ActionController::Base
   def set_page_title_header
     # Per https://tools.ietf.org/html/rfc5987, headers need to be ISO-8859-1, not UTF-8
     response.headers['Page-Title'] = URI.escape(page_title('GitLab'))
+  end
+
+  def sessionless_user?
+    current_user && !session.keys.include?('warden.user.user.key')
+  end
+
+  def peek_request?
+    request.path.start_with?('/-/peek')
+  end
+
+  def should_enforce_terms?
+    return false unless Gitlab::CurrentSettings.current_application_settings.enforce_terms
+
+    !(peek_request? || devise_controller?)
   end
 end

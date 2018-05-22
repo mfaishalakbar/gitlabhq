@@ -9,6 +9,8 @@ class Group < Namespace
   include SelectForProjectAuthorization
   include LoadedInGroupList
   include GroupDescendant
+  include TokenAuthenticatable
+  include WithUploads
 
   has_many :group_members, -> { where(requested_at: nil) }, dependent: :destroy, as: :source # rubocop:disable Cop/ActiveRecordDependent
   alias_method :members, :group_members
@@ -29,7 +31,8 @@ class Group < Namespace
   has_many :variables, class_name: 'Ci::GroupVariable'
   has_many :custom_attributes, class_name: 'GroupCustomAttribute'
 
-  has_many :uploads, as: :model, dependent: :destroy # rubocop:disable Cop/ActiveRecordDependent
+  has_many :boards
+  has_many :badges, class_name: 'GroupBadge'
 
   accepts_nested_attributes_for :variables, allow_destroy: true
 
@@ -39,6 +42,8 @@ class Group < Namespace
   validates :variables, variable_duplicates: true
 
   validates :two_factor_grace_period, presence: true, numericality: { greater_than_or_equal_to: 0 }
+
+  add_authentication_token_field :runners_token
 
   after_create :post_create_hook
   after_destroy :post_destroy_hook
@@ -50,7 +55,7 @@ class Group < Namespace
       Gitlab::Database.postgresql?
     end
 
-    def sort(method)
+    def sort_by_attribute(method)
       if method == 'storage_size_desc'
         # storage_size is a virtual column so we need to
         # pass a string to avoid AR adding the table name
@@ -122,6 +127,10 @@ class Group < Namespace
     self[:lfs_enabled]
   end
 
+  def owned_by?(user)
+    owners.include?(user)
+  end
+
   def add_users(users, access_level, current_user: nil, expires_at: nil)
     GroupMember.add_users(
       self,
@@ -186,12 +195,6 @@ class Group < Namespace
     owners.include?(user) && owners.size == 1
   end
 
-  def avatar_type
-    unless self.avatar.image?
-      self.errors.add :avatar, "only images allowed"
-    end
-  end
-
   def post_create_hook
     Gitlab::AppLogger.info("Group \"#{name}\" was created")
 
@@ -227,14 +230,21 @@ class Group < Namespace
       end
 
     GroupMember
-      .active_without_invites
+      .active_without_invites_and_requests
       .where(source_id: source_ids)
   end
 
   def members_with_descendants
     GroupMember
-      .active_without_invites
+      .active_without_invites_and_requests
       .where(source_id: self_and_descendants.reorder(nil).select(:id))
+  end
+
+  # Returns all members that are part of the group, it's subgroups, and ancestor groups
+  def direct_and_indirect_members
+    GroupMember
+      .active_without_invites_and_requests
+      .where(source_id: self_and_hierarchy.reorder(nil).select(:id))
   end
 
   def users_with_parents
@@ -247,6 +257,30 @@ class Group < Namespace
     User
       .where(id: members_with_descendants.select(:user_id))
       .reorder(nil)
+  end
+
+  # Returns all users that are members of the group because:
+  # 1. They belong to the group
+  # 2. They belong to a project that belongs to the group
+  # 3. They belong to a sub-group or project in such sub-group
+  # 4. They belong to an ancestor group
+  def direct_and_indirect_users
+    union = Gitlab::SQL::Union.new([
+      User
+        .where(id: direct_and_indirect_members.select(:user_id))
+        .reorder(nil),
+      project_users_with_descendants
+    ])
+
+    User.from("(#{union.to_sql}) #{User.table_name}")
+  end
+
+  # Returns all users that are members of projects
+  # belonging to the current group or sub-groups
+  def project_users_with_descendants
+    User
+      .joins(projects: :group)
+      .where(namespaces: { id: self_and_descendants.select(:id) })
   end
 
   def max_member_access_for_user(user)
@@ -287,6 +321,17 @@ class Group < Namespace
 
   def hashed_storage?(_feature)
     false
+  end
+
+  def refresh_project_authorizations
+    refresh_members_authorized_projects(blocking: false)
+  end
+
+  # each existing group needs to have a `runners_token`.
+  # we do this on read since migrating all existing groups is not a feasible
+  # solution.
+  def runners_token
+    ensure_runners_token!
   end
 
   private

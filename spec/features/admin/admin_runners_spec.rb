@@ -59,6 +59,47 @@ describe "Admin Runners" do
         expect(page).to have_text 'No runners found'
       end
     end
+
+    context 'group runner' do
+      let(:group) { create(:group) }
+      let!(:runner) { create(:ci_runner, groups: [group], runner_type: :group_type) }
+
+      it 'shows the label and does not show the project count' do
+        visit admin_runners_path
+
+        within "#runner_#{runner.id}" do
+          expect(page).to have_selector '.label', text: 'group'
+          expect(page).to have_text 'n/a'
+        end
+      end
+    end
+
+    context 'shared runner' do
+      it 'shows the label and does not show the project count' do
+        runner = create :ci_runner, :shared
+
+        visit admin_runners_path
+
+        within "#runner_#{runner.id}" do
+          expect(page).to have_selector '.label', text: 'shared'
+          expect(page).to have_text 'n/a'
+        end
+      end
+    end
+
+    context 'specific runner' do
+      it 'shows the label and the project count' do
+        project = create :project
+        runner = create :ci_runner, projects: [project]
+
+        visit admin_runners_path
+
+        within "#runner_#{runner.id}" do
+          expect(page).to have_selector '.label', text: 'specific'
+          expect(page).to have_text '1'
+        end
+      end
+    end
   end
 
   describe "Runner show page" do
@@ -76,8 +117,8 @@ describe "Admin Runners" do
 
     describe 'projects' do
       it 'contains project names' do
-        expect(page).to have_content(@project1.name_with_namespace)
-        expect(page).to have_content(@project2.name_with_namespace)
+        expect(page).to have_content(@project1.full_name)
+        expect(page).to have_content(@project2.full_name)
       end
     end
 
@@ -89,8 +130,8 @@ describe "Admin Runners" do
       end
 
       it 'contains name of correct project' do
-        expect(page).to have_content(@project1.name_with_namespace)
-        expect(page).not_to have_content(@project2.name_with_namespace)
+        expect(page).to have_content(@project1.full_name)
+        expect(page).not_to have_content(@project2.full_name)
       end
     end
 
